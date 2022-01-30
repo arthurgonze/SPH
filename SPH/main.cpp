@@ -12,7 +12,7 @@
 using namespace Eigen;
 using namespace std;
 
-// particle data structure stores position, velocity, and force for integration
+// particle data structure stores position, velocity full step, velocity half step, and force for integration
 // stores density (rho) and pressure values for SPH
 struct Particle
 {
@@ -87,7 +87,6 @@ int updates = 0;
 // SPH
 void AddParticles()
 {
-//    cout << "Adding " << BLOCK_PARTICLES << " particles" << endl;
     unsigned int placed = 0;
 
     for (float y = (DOMAIN_HEIGHT*3)/4; y < DOMAIN_HEIGHT; y += H)
@@ -96,24 +95,17 @@ void AddParticles()
             {
                 int i = x/CELL_WIDTH;
                 int j = y/CELL_HEIGHT;
-//                cout << "Grid cell pos: " << i <<", "<< j << endl;
-//                int sign = 1;
-//                if(x < DOMAIN_WIDTH/2)
-//                    sign = -1;
 
                 Particle p = Particle(x, y, 0, -1000);
-//                Particle p = Particle(x, y);
                 p.id = particles_in_sim;
                 grid[i][j].push_back(p);
                 particles_in_sim++;
                 placed++;
             }
-//    cout << "Added " << placed << " particles" << endl;
 }
 
 void InitSPH()
 {
-    //    cout << "initializing dam break with " << DAM_PARTICLES << " particles" << endl;
     for (float y = EPS; y < DOMAIN_HEIGHT - EPS; y += H)
         for (float pos = DOMAIN_WIDTH/3; pos <= (DOMAIN_WIDTH*2)/3; pos += H)
             if (particles_in_sim < DAM_PARTICLES)
@@ -133,11 +125,9 @@ void InitSPH()
 
 void Integrate()
 {
-//    #pragma omp parallel for collapse(2)
     for(int i=0; i<GRID_WIDTH_CELLS; i++)
         for(int j=0; j<GRID_HEIGHT_CELLS;j++)
         {
-            // se nao houver particulas na celula apenas pula a iteracao
             if(grid[i][j].size()==0)
                 continue;
 
@@ -199,11 +189,9 @@ void Integrate()
 void UpdateGridPositions()
 {
     bool position_changed = false;
-//    #pragma omp parallel for collapse(2)
     for(int i=0; i<GRID_WIDTH_CELLS; i++)
         for(int j=0; j<GRID_HEIGHT_CELLS;j++)
         {
-            // se nao houver particulas na celula apenas pula a iteracao
             if(grid[i][j].size()==0)
                 continue;
 
@@ -234,8 +222,6 @@ void UpdateGridPositions()
             grid[i][j].swap(particles);
             particles.clear();
         }
-//    if(position_changed)
-//        cout << "There was particles that changed position in grid update" << endl;
 }
 
 void ContParticles()
@@ -245,12 +231,8 @@ void ContParticles()
         for(int j=0; j<GRID_HEIGHT_CELLS;j++)
         {
             int particlesInCell = 0;
-            // se nao houver particulas na celula apenas pula a iteracao
             if (grid[i][j].size() == 0)
-            {
-//                cout << "Cell (" << i << ", " << j << "), have: " << particlesInCell << " particles" << endl;
                 continue;
-            }
             for (auto &p : grid[i][j])
             {
                 cont_particles++;
@@ -263,11 +245,9 @@ void ContParticles()
 
 void ComputeDensityPressure()
 {
-//    #pragma omp parallel for
     for(int i=0; i<GRID_WIDTH_CELLS; i++)
         for(int j=0; j<GRID_HEIGHT_CELLS;j++)
         {
-            // se nao houver particulas na celula apenas pula a iteracao
             if(grid[i][j].size()==0)
                 continue;
             for (auto &pi : grid[i][j])
@@ -291,7 +271,6 @@ void ComputeDensityPressure()
                 if(max_j >= GRID_HEIGHT_CELLS)
                     max_j = GRID_HEIGHT_CELLS-1;
                 //----------------------------------------
-//                #pragma omp parallel for collapse(2) reduction(+:rho)
                 for(int act_i = min_i; act_i <= max_i; act_i++)
                     for(int act_j = min_j; act_j <= max_j; act_j++)
                     {
@@ -317,11 +296,9 @@ void ComputeDensityPressure()
 
 void ComputeForces()
 {
-//    #pragma omp parallel for
     for(int i=0; i<GRID_WIDTH_CELLS; i++)
         for(int j=0; j<GRID_HEIGHT_CELLS;j++)
         {
-            // se nao houver particulas na celula apenas pula a iteracao
             if(grid[i][j].size()==0)
                 continue;
 
@@ -331,27 +308,22 @@ void ComputeForces()
                 Vector2d fvisc(0.f, 0.f);
 
                 //----------------------------------------
-//                int min_i = (pi.pos(0)-H)/CELL_WIDTH;
                 int min_i = i-1;
                 if(min_i < 0)
                     min_i = 0;
                 //----------------------------------------
-//                int max_i = (pi.pos(0)+H)/CELL_WIDTH;
                 int max_i = i+1;
                 if(max_i >= GRID_WIDTH_CELLS)
                     max_i = GRID_WIDTH_CELLS-1;
                 //----------------------------------------
-//                int min_j = (pi.pos(1)-H)/CELL_HEIGHT;
                 int min_j = j-1;
                 if(min_j < 0)
                     min_j = 0;
                 //----------------------------------------
-//                int max_j = (pi.pos(1)+H)/CELL_HEIGHT;
                 int max_j = j+1;
                 if(max_j >= GRID_HEIGHT_CELLS)
                     max_j = GRID_HEIGHT_CELLS-1;
                 //----------------------------------------
-//                #pragma omp parallel for collapse(2)
                 for(int act_i = min_i; act_i <= max_i; act_i++)
                     for(int act_j = min_j; act_j <= max_j; act_j++)
                     {
@@ -389,35 +361,25 @@ void Update()
         clock_t func_time = clock();
         if(updates != 0 && updates % ADD_PARTICLES_EVERY == 0 && updates <= ADD_PARTICLES_UNTIL)
         {
-//            cout << "Adding Particles - Begin" << endl;
             func_time = clock();
             AddParticles();
-//            cout << "Adding Particles - End" << endl;
 //            std::cout << "Adding Particles time(s): " << float( clock () - func_time ) /  CLOCKS_PER_SEC << endl << endl;
         }
 
-//        cout << "Computing Density and Pressure - Begin" << endl;
         func_time = clock();
         ComputeDensityPressure();
-//        cout << "Computing Density and Pressure - End" << endl;
 //        std::cout << "Compute Density time(s): " << float( clock () - func_time ) /  CLOCKS_PER_SEC << endl << endl;
 
-//        cout << "Computing Forces - Begin" << endl;
         func_time = clock();
         ComputeForces();
-//        cout << "Computing Forces - End" << endl;
 //        std::cout << "Computing forces time(s): " << float( clock () - func_time ) /  CLOCKS_PER_SEC << endl << endl;
 
-//        cout << "Integrating - Begin" << endl;
         func_time = clock();
         Integrate();
-//        cout << "Integrating - End" << endl;
 //        std::cout << "Integrate time(s): " << float( clock () - func_time ) /  CLOCKS_PER_SEC << endl << endl;
 
-//        cout << "Updating grid - Begin" << endl;
         func_time = clock();
         UpdateGridPositions();
-//        cout << "Updating grid - End" << endl;
 //        std::cout << "Update grid time(s): " << float( clock () - func_time ) /  CLOCKS_PER_SEC << endl << endl;
 
         std::cout << "Frame time(s): " << float( clock () - update_time ) /  CLOCKS_PER_SEC << endl << endl << endl;
@@ -539,17 +501,6 @@ void Keyboard(unsigned char c, __attribute__((unused)) int pos, __attribute__((u
         case 'a': // add particles
             AddParticles();
             break;
-//        case 'r': // reset
-//        case 'R': // reset
-//            for(int i=0; i<GRID_WIDTH_CELLS; i++)
-//                for(int j=0; j<GRID_HEIGHT_CELLS;j++)
-//                    grid[i][j].clear();
-//            particles_in_sim = 0;
-//            InitSPH();
-//            break;
-//        case 's': // step
-//            step = true;
-//            break;
         case 'f': // advance frame
             advance_frame = true;
             break;
