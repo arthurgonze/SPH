@@ -12,15 +12,40 @@
 using namespace Eigen;
 using namespace std;
 
+struct Tensor
+{
+    Tensor()
+    {
+        matrix[0][0] = 2;
+        matrix[0][1] = -1;
+
+        matrix[1][0] = -1;
+        matrix[1][1] = 2;
+    }
+
+    Tensor(float _m[2][2])
+    {
+        matrix[0][0] = _m[0][0];
+        matrix[0][1] = _m[0][1];
+
+        matrix[1][0] = _m[1][0];
+        matrix[1][1] = _m[1][1];
+    }
+
+    float matrix[2][2];
+};
+
 // particle data structure stores position, velocity full step, velocity half step, and force for integration
 // stores density (rho) and pressure values for SPH
 struct Particle
 {
     Particle(float _x, float _y) : pos(_x, _y), vel(0.f, 0.f), vh(0.f, 0.f), f(0.f, 0.f), rho(0), p(0.f) {}
-    Particle(float _x, float _y, float _vx, float _vy) : pos(_x, _y), vel(_vx, _vy), vh(_vx, _vy), f(0.f, 0.f), rho(0), p(0.f) {}
+    Particle(float _x, float _y, float _vx, float _vy) : pos(_x, _y), vel(_vx, _vy), vh(_vx, _vy), f(0.f, 0.f), rho(0), p(0.f), tensor(Tensor()) {}
     Vector2d pos, vel, vh, f;
+    Tensor tensor;
     float rho, p;
     int id;
+
 
     bool operator==(const Particle& rhs) const
     {
@@ -33,6 +58,8 @@ struct Particle
     }
 };
 
+
+
 // "Particle-Based Fluid Simulation for Interactive Applications" by Müller et al. solver parameters
 const static Vector2d G(0.f, -10.f);   // external (gravitational) forces
 const static float REST_DENS = 300.f;  // rest density
@@ -44,14 +71,23 @@ const static float VISC = 200.f;	   // viscosity constant
 const static float DT = 0.0005f;	   // integration timestep
 const static int N_TIME_STEPS = 2500;  // Number of timesteps
 
-// smoothing kernels defined in Müller and their gradients adapted to 2D per "SPH Based Shallow Water Simulation" by Solenthaler et al.
-const static float POLY6 = 4.f / (M_PI * pow(H, 8.f));
-const static float SPIKY_GRAD = -10.f / (M_PI * pow(H, 5.f));
-const static float VISC_LAP = 40.f / (M_PI * pow(H, 5.f));
+// smoothing kernels defined in Müller and their gradients adapted to 2D per "SPH Based Shallow Water Simulation"
+// by Solenthaler et al.
+//const static float POLY6 = 4.f / (M_PI * pow(H, 8.f));
+//const static float POLY6 = 315.f / (64.f * M_PI * pow(H, 9.f)); // default
+const static float POLY6 = 315.f / (64.f * M_PI * pow(H, 8.f)); // default +/-
+
+//const static float SPIKY_GRAD = -10.f / (M_PI * pow(H, 5.f));
+//const static float SPIKY_GRAD = -15.f / (M_PI * pow(H, 6.f)); // default
+const static float SPIKY_GRAD = -15.f / (M_PI * pow(H, 5.f)); // default +/-
+
+//const static float VISC_LAP = 40.f / (M_PI * pow(H, 5.f));
+//const static float VISC_LAP = 45.f / (M_PI * pow(H, 6.f)); // default
+const static float VISC_LAP = 45.f / (M_PI * pow(H, 5.f)); // default +/-
 
 // simulation parameters
 const static float EPS = H; // boundary epsilon
-const static float BOUND_DAMPING = -0.5f;
+const static float BOUND_DAMPING = -0.9f;
 
 // interaction
 const static int MAX_PARTICLES = 10000;
@@ -74,13 +110,14 @@ const static float CELL_WIDTH = H+H; // 1200 / 16 = 75;
 const static float CELL_HEIGHT = H+H; // 900 / 9 = 100;
 const static int GRID_WIDTH_CELLS = DOMAIN_WIDTH/CELL_WIDTH; // 1200 / 75 = 16;
 const static int GRID_HEIGHT_CELLS = DOMAIN_HEIGHT/CELL_HEIGHT; // 900 / 100 = 9;
+vector<Particle> grid[GRID_WIDTH_CELLS][GRID_HEIGHT_CELLS]; // MAP
 
 // solver data
 bool step = false;
 bool advance_frame = false;
 bool paused = true;
 static int particles_in_sim = 0;
-vector<Particle> grid[GRID_WIDTH_CELLS][GRID_HEIGHT_CELLS]; // MAP
+
 
 int updates = 0;
 
@@ -252,24 +289,25 @@ void ComputeDensityPressure()
                 continue;
             for (auto &pi : grid[i][j])
             {
-                float rho = 0.f;
+                pi.rho = 0;
 
                 //----------------------------------------
-                int min_i = (pi.pos(0)-HSQ)/CELL_WIDTH;
+                int min_i = i-1;
                 if(min_i < 0)
                     min_i = 0;
                 //----------------------------------------
-                int max_i = (pi.pos(0)+HSQ)/CELL_WIDTH;
+                int max_i = i+1;
                 if(max_i >= GRID_WIDTH_CELLS)
                     max_i = GRID_WIDTH_CELLS-1;
                 //----------------------------------------
-                int min_j = (pi.pos(1)-HSQ)/CELL_HEIGHT;
+                int min_j = j-1;
                 if(min_j < 0)
                     min_j = 0;
                 //----------------------------------------
-                int max_j = (pi.pos(1)+HSQ)/CELL_HEIGHT;
+                int max_j = j+1;
                 if(max_j >= GRID_HEIGHT_CELLS)
                     max_j = GRID_HEIGHT_CELLS-1;
+
                 //----------------------------------------
                 for(int act_i = min_i; act_i <= max_i; act_i++)
                     for(int act_j = min_j; act_j <= max_j; act_j++)
@@ -279,16 +317,16 @@ void ComputeDensityPressure()
                         for (auto &pj: grid[act_i][act_j])
                         {
                             Vector2d rij = pj.pos - pi.pos;
-                            float r2 = rij.squaredNorm();
+                            float r = rij.norm();
+                            float r2 = r*r;
 
-                            if (r2 < HSQ)
-                                rho += MASS * POLY6 * pow(HSQ - r2, 3.f); // this computation is symmetric
+                            if (r <= H)
+                                pi.rho += MASS * POLY6 * pow(HSQ - r2, 3.f); // this computation is symmetric
                         }
                     }
-                if(rho != 0)
-                    pi.rho = rho;
-                if(pi.rho == 0)
-                    pi.rho = REST_DENS;
+//                if(pi.rho == 0)
+//                    pi.rho
+
                 pi.p = GAS_CONST * (pi.rho - REST_DENS);
             }
         }
@@ -337,9 +375,16 @@ void ComputeForces()
                             Vector2d rij = pj.pos - pi.pos;
                             float r = rij.norm();
 
-                            if (r < H)
+                            if (r <= H)
                             {
-                                fpress += -rij.normalized() * MASS * (pi.p + pj.p) / (2.f * pj.rho) * SPIKY_GRAD * pow(H - r, 3.f);
+                                double tpi[2] = {(pi.tensor.matrix[0][0] + pi.tensor.matrix[0][1])*pi.p,
+                                                        (pi.tensor.matrix[1][0] + pi.tensor.matrix[1][1])*pi.p};
+
+                                double tpj[2] = {(pj.tensor.matrix[0][0] + pj.tensor.matrix[0][1])*pj.p,
+                                                        (pj.tensor.matrix[1][0] + pj.tensor.matrix[1][1])*pj.p};
+
+                                fpress[0] += -rij.normalized()[0] * MASS * (tpi[0] + tpj[0]) / (2.f * pj.rho) * SPIKY_GRAD * pow(H - r, 3.f);
+                                fpress[1] += -rij.normalized()[1] * MASS * (tpi[1] + tpj[1]) / (2.f * pj.rho) * SPIKY_GRAD * pow(H - r, 3.f);
                                 fvisc += VISC * MASS * (pj.vel - pi.vel) / pj.rho * VISC_LAP * (H - r);
                             }
                         }
